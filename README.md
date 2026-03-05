@@ -31,6 +31,4 @@ cp -R build/Release/MyCalendar.app /Applications/
 open /Applications/MyCalendar.app
 ```
 
-## License
 
-[Choose a license — e.g. MIT, Apache 2.0 — and add a LICENSE file.]
