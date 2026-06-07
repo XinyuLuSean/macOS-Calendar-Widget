@@ -67,8 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isOpaque      = false
         window.backgroundColor = .clear
         window.hasShadow     = true
-        window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
-        window.level = viewModel.floatOnTop ? .floating : .normal
+        configureWindowLevel(window, floats: viewModel.floatOnTop)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -87,6 +86,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         setupDragMonitor()
+    }
+
+    func applyWindowLevel(floats: Bool) {
+        guard let window = mainWindow else { return }
+        configureWindowLevel(window, floats: floats)
+    }
+
+    private func configureWindowLevel(_ window: NSWindow, floats: Bool) {
+        window.level = floats ? .statusBar : .normal
+        window.collectionBehavior = floats
+            ? [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            : [.fullScreenAuxiliary, .moveToActiveSpace]
     }
 
     // MARK: Auto-height

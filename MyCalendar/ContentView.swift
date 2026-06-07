@@ -30,7 +30,10 @@ struct ContentView: View {
                 .font(.headline)
             Spacer()
             Menu {
-                Toggle(isOn: $viewModel.floatOnTop) {
+                Toggle(isOn: Binding(
+                    get: { viewModel.floatOnTop },
+                    set: { viewModel.setFloatOnTop($0) }
+                )) {
                     Label("Float Above Windows", systemImage: "pin")
                 }
                 Toggle(isOn: Binding(
@@ -72,7 +75,10 @@ struct ContentView: View {
             .popover(isPresented: $isShowingDatePicker, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Target Date").font(.headline)
-                    DatePicker("", selection: $viewModel.targetDate, displayedComponents: .date)
+                    DatePicker("", selection: Binding(
+                        get: { viewModel.targetDate },
+                        set: { viewModel.setTargetDate($0) }
+                    ), displayedComponents: .date)
                         .datePickerStyle(.graphical)
                         .labelsHidden()
                 }
@@ -314,6 +320,7 @@ final class WidgetViewModel: ObservableObject {
         UserDefaults.standard.set(targetDate.timeIntervalSince1970, forKey: "targetDateTimestamp")
         UserDefaults.standard.set(launchAtLogin, forKey: "launchAtLogin")
         UserDefaults.standard.set(floatOnTop,    forKey: "floatOnTop")
+        UserDefaults.standard.synchronize()
     }
 
     // MARK: Date helpers
@@ -345,6 +352,7 @@ final class WidgetViewModel: ObservableObject {
     private func setCurrentItems(_ items: [TodoItem]) {
         if items.isEmpty { allTodos.removeValue(forKey: selectedDateKey) }
         else             { allTodos[selectedDateKey] = items }
+        persistAll()
     }
 
     var daysLeft: Int {
@@ -380,7 +388,18 @@ final class WidgetViewModel: ObservableObject {
         setCurrentItems(items)
     }
 
+    func setTargetDate(_ date: Date) {
+        targetDate = Calendar.current.startOfDay(for: date)
+        persistAll()
+    }
+
     // MARK: Settings
+
+    func setFloatOnTop(_ enabled: Bool) {
+        floatOnTop = enabled
+        persistAll()
+        (NSApp.delegate as? AppDelegate)?.applyWindowLevel(floats: enabled)
+    }
 
     func setLaunchAtLogin(_ enabled: Bool) {
         do {
@@ -393,11 +412,6 @@ final class WidgetViewModel: ObservableObject {
             launchAtLogin = false
             launchAtLoginError = "Launch at Login failed: \(error.localizedDescription)"
         }
-    }
-
-    func applyWindowLevel() {
-        (NSApp.delegate as? AppDelegate)?.mainWindow?.level = floatOnTop ? .floating : .normal
-        UserDefaults.standard.set(floatOnTop, forKey: "floatOnTop")
     }
 }
 
