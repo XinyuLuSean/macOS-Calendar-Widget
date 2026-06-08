@@ -139,7 +139,7 @@ struct ContentView: View {
                     .padding(.vertical, 8)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.currentItems) { item in
+                    ForEach(Array(viewModel.currentItems.enumerated()), id: \.element.id) { index, item in
                         HStack(spacing: 10) {
                             Button { viewModel.toggle(itemID: item.id) } label: {
                                 Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
@@ -181,6 +181,20 @@ struct ContentView: View {
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.secondary)
                             } else {
+                                HStack(spacing: 2) {
+                                    Button { viewModel.moveTodo(itemID: item.id, by: -1) } label: {
+                                        Image(systemName: "chevron.up")
+                                    }
+                                    .disabled(index == 0)
+
+                                    Button { viewModel.moveTodo(itemID: item.id, by: 1) } label: {
+                                        Image(systemName: "chevron.down")
+                                    }
+                                    .disabled(index == viewModel.currentItems.count - 1)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+
                                 Button { beginEditing(item) } label: {
                                     Image(systemName: "pencil")
                                 }
@@ -456,6 +470,18 @@ final class WidgetViewModel: ObservableObject {
         var items = currentItems
         guard let i = items.firstIndex(where: { $0.id == itemID }) else { return }
         items[i].text = t
+        setCurrentItems(items)
+    }
+
+    func moveTodo(itemID: UUID, by offset: Int) {
+        var items = currentItems
+        guard
+            let from = items.firstIndex(where: { $0.id == itemID }),
+            items.indices.contains(from + offset)
+        else { return }
+
+        let item = items.remove(at: from)
+        items.insert(item, at: from + offset)
         setCurrentItems(items)
     }
 
