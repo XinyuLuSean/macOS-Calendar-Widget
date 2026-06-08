@@ -136,6 +136,8 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
+            wordsForToday
+
             // ── Todo rows (no scroll — window auto-heights instead) ──────────
             if viewModel.currentItems.isEmpty {
                 Text("No todos for this day")
@@ -260,6 +262,45 @@ struct ContentView: View {
         }
     }
 
+    private var wordsForToday: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let line = viewModel.wordsForToday {
+                Text(line)
+                    .font(.callout.weight(.semibold))
+                    .italic()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Button {
+                    Task { await viewModel.generateWordsForToday() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if viewModel.isGeneratingWordsForToday {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.65)
+                        } else {
+                            Image(systemName: "sparkles")
+                        }
+                        Text(viewModel.isGeneratingWordsForToday ? "Generating..." : "Words For Today")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isGeneratingWordsForToday)
+            }
+
+            if let error = viewModel.wordsForTodayError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func beginEditing(_ item: TodoItem) {
         if editingTodoID != item.id {
             commitEditingTodo()
@@ -371,6 +412,102 @@ struct TodoItem: Identifiable, Codable, Equatable {
     var isDone: Bool
 }
 
+// MARK: - Words For Today API
+
+private enum MotivationAPIConfig {
+    static let apiKey = "PASTE_YOUR_LLM_API_KEY_HERE"
+    static let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+    static let model = "gpt-4o-mini"
+}
+
+private enum MotivationAPIError: LocalizedError {
+    case missingAPIKey
+    case invalidResponse
+    case emptyMessage
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAPIKey:
+            return "Paste your LLM API key in MotivationAPIConfig.apiKey."
+        case .invalidResponse:
+            return "Words API returned an unreadable response."
+        case .emptyMessage:
+            return "Words API did not return a line."
+        }
+    }
+}
+
+private struct ChatCompletionResponse: Decodable {
+    struct Choice: Decodable {
+        struct Message: Decodable {
+            let content: String
+        }
+
+        let message: Message
+    }
+
+    let choices: [Choice]
+}
+
+private struct MotivationService {
+    func generateLine(for items: [TodoItem]) async throws -> String {
+        let apiKey = MotivationAPIConfig.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty, apiKey != "PASTE_YOUR_LLM_API_KEY_HERE" else {
+            throw MotivationAPIError.missingAPIKey
+        }
+
+        var request = URLRequest(url: MotivationAPIConfig.endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload(for: items))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode),
+              let decoded = try? JSONDecoder().decode(ChatCompletionResponse.self, from: data) else {
+            throw MotivationAPIError.invalidResponse
+        }
+
+        let content = decoded.choices.first?.message.content
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        guard let content, !content.isEmpty else { throw MotivationAPIError.emptyMessage }
+        return content
+    }
+
+    private func payload(for items: [TodoItem]) -> [String: Any] {
+        let todoSummary: String
+        if items.isEmpty {
+            todoSummary = "No todos have been written yet."
+        } else {
+            todoSummary = items.enumerated()
+                .map { index, item in
+                    let status = item.isDone ? "done" : "open"
+                    return "\(index + 1). [\(status)] \(item.text)"
+                }
+                .joined(separator: "\n")
+        }
+
+        return [
+            "model": MotivationAPIConfig.model,
+            "messages": [
+                [
+                    "role": "system",
+                    "content": "You are a warm, intense career coach for someone job hunting. Return exactly one brief motivational line, 8 to 18 words, no markdown, no quotation marks."
+                ],
+                [
+                    "role": "user",
+                    "content": "Analyze today's todos and give me one line that helps me lock in and never give up.\n\nTodos:\n\(todoSummary)"
+                ]
+            ],
+            "temperature": 0.9,
+            "max_tokens": 40
+        ]
+    }
+}
+
 // MARK: - View Model
 
 final class WidgetViewModel: ObservableObject {
@@ -381,10 +518,14 @@ final class WidgetViewModel: ObservableObject {
     @Published var launchAtLogin = false
     @Published var floatOnTop    = false
     @Published var launchAtLoginError: String?
+    @Published var wordsForToday: String?
+    @Published var wordsForTodayError: String?
+    @Published var isGeneratingWordsForToday = false
     var isTodoDragActive = false
     var todoRowFrames: [CGRect] = []
 
     private var isLoading = true
+    private let motivationService = MotivationService()
 
     private static let keyFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
@@ -444,10 +585,14 @@ final class WidgetViewModel: ObservableObject {
 
     func previousDay() { shift(by: -1) }
     func nextDay()     { shift(by:  1) }
-    func goToToday()   { selectedDate = Date() }
+    func goToToday()   {
+        selectedDate = Date()
+        resetWordsForToday()
+    }
 
     private func shift(by days: Int) {
         selectedDate = Calendar.current.date(byAdding: .day, value: days, to: selectedDate) ?? selectedDate
+        resetWordsForToday()
     }
 
     // MARK: Computed from selected date
@@ -457,6 +602,7 @@ final class WidgetViewModel: ObservableObject {
     private func setCurrentItems(_ items: [TodoItem]) {
         if items.isEmpty { allTodos.removeValue(forKey: selectedDateKey) }
         else             { allTodos[selectedDateKey] = items }
+        resetWordsForToday()
         persistAll()
     }
 
@@ -513,6 +659,26 @@ final class WidgetViewModel: ObservableObject {
         let item = items.remove(at: from)
         items.insert(item, at: to)
         setCurrentItems(items)
+    }
+
+    @MainActor
+    func generateWordsForToday() async {
+        guard !isGeneratingWordsForToday else { return }
+        isGeneratingWordsForToday = true
+        wordsForTodayError = nil
+
+        do {
+            wordsForToday = try await motivationService.generateLine(for: currentItems)
+        } catch {
+            wordsForTodayError = error.localizedDescription
+        }
+
+        isGeneratingWordsForToday = false
+    }
+
+    private func resetWordsForToday() {
+        wordsForToday = nil
+        wordsForTodayError = nil
     }
 
     func setTargetDate(_ date: Date) {
