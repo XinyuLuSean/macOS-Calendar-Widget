@@ -24,7 +24,11 @@ struct ContentView: View {
         // Width is fixed by the window; height is unconstrained so fittingSize is accurate.
         .frame(minWidth: 300, maxWidth: 600)
         .background(Color.clear)
+        .coordinateSpace(name: "widget")
         .preferredColorScheme(.dark)
+        .onPreferenceChange(TodoRowFramePreferenceKey.self) { frames in
+            viewModel.todoRowFrames = Array(frames.values)
+        }
     }
 
     // MARK: Header
@@ -169,6 +173,7 @@ struct ContentView: View {
                                     .onDrag {
                                         cancelEditingTodo()
                                         draggedTodoID = item.id
+                                        viewModel.isTodoDragActive = true
                                         return NSItemProvider(object: item.id.uuidString as NSString)
                                     }
                             }
@@ -186,6 +191,14 @@ struct ContentView: View {
                         .padding(10)
                         .background(.white.opacity(0.05))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: TodoRowFramePreferenceKey.self,
+                                    value: [item.id: proxy.frame(in: .named("widget"))]
+                                )
+                            }
+                        )
                         .onDrop(
                             of: [.text],
                             delegate: TodoDropDelegate(
@@ -232,6 +245,9 @@ struct ContentView: View {
                 commitEditingTodo()
             }
         }
+        .onChange(of: draggedTodoID) {
+            viewModel.isTodoDragActive = draggedTodoID != nil
+        }
     }
 
     // MARK: Resize Grip
@@ -270,6 +286,14 @@ struct ContentView: View {
     }
 }
 
+private struct TodoRowFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 private struct TodoDropDelegate: DropDelegate {
     let targetID: UUID
     let viewModel: WidgetViewModel
@@ -282,6 +306,7 @@ private struct TodoDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         draggedTodoID = nil
+        viewModel.isTodoDragActive = false
         return true
     }
 }
@@ -356,6 +381,8 @@ final class WidgetViewModel: ObservableObject {
     @Published var launchAtLogin = false
     @Published var floatOnTop    = false
     @Published var launchAtLoginError: String?
+    var isTodoDragActive = false
+    var todoRowFrames: [CGRect] = []
 
     private var isLoading = true
 

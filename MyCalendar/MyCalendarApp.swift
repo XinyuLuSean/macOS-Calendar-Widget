@@ -142,12 +142,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch event.type {
         case .leftMouseDown:
             let hit = win.contentView?.hitTest(event.locationInWindow)
-            skipDrag       = hit is NSTextField || hit is NSTextView
+            viewModel.isTodoDragActive = false
+            skipDrag       = hit is NSTextField || hit is NSTextView || hit is NSButton || isInTodoRow(event.locationInWindow)
             dragStartMouse  = NSEvent.mouseLocation
             dragStartOrigin = win.frame.origin
 
         case .leftMouseDragged:
-            guard !skipDrag else { return }
+            guard !skipDrag, !viewModel.isTodoDragActive else { return }
             // Leave the bottom-right 28×28 pt for the resize grip.
             let loc = event.locationInWindow
             if loc.x > win.frame.width - 28 && loc.y < 28 { return }
@@ -159,8 +160,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         case .leftMouseUp:
             skipDrag = false
+            viewModel.isTodoDragActive = false
 
         default: break
+        }
+    }
+
+    private func isInTodoRow(_ location: NSPoint) -> Bool {
+        guard let hv = hostingView else { return false }
+        return viewModel.todoRowFrames.contains { frame in
+            let rect = NSRect(
+                x: frame.minX,
+                y: hv.bounds.height - frame.maxY,
+                width: frame.width,
+                height: frame.height
+            ).insetBy(dx: -4, dy: -4)
+            return rect.contains(location)
         }
     }
 
