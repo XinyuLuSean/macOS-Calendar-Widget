@@ -1,6 +1,7 @@
 import SwiftUI
 import ServiceManagement
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Content View
 
@@ -9,6 +10,7 @@ struct ContentView: View {
     @State private var isShowingDatePicker = false
     @State private var editingTodoID: UUID?
     @State private var editingTodoText = ""
+    @State private var draggedTodoID: UUID?
     @FocusState private var focusedTodoID: UUID?
 
     var body: some View {
@@ -139,7 +141,7 @@ struct ContentView: View {
                     .padding(.vertical, 8)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(viewModel.currentItems.enumerated()), id: \.element.id) { index, item in
+                    ForEach(viewModel.currentItems) { item in
                         HStack(spacing: 10) {
                             Button { viewModel.toggle(itemID: item.id) } label: {
                                 Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
@@ -164,55 +166,34 @@ struct ContentView: View {
                                     .lineLimit(2)
                                     .contentShape(Rectangle())
                                     .onTapGesture { beginEditing(item) }
+                                    .onDrag {
+                                        cancelEditingTodo()
+                                        draggedTodoID = item.id
+                                        return NSItemProvider(object: item.id.uuidString as NSString)
+                                    }
                             }
 
                             Spacer(minLength: 0)
 
-                            if editingTodoID == item.id {
-                                Button { commitEditingTodo() } label: {
-                                    Image(systemName: "checkmark")
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.green)
-
-                                Button { cancelEditingTodo() } label: {
-                                    Image(systemName: "xmark")
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
-                            } else {
-                                HStack(spacing: 2) {
-                                    Button { viewModel.moveTodo(itemID: item.id, by: -1) } label: {
-                                        Image(systemName: "chevron.up")
-                                    }
-                                    .disabled(index == 0)
-
-                                    Button { viewModel.moveTodo(itemID: item.id, by: 1) } label: {
-                                        Image(systemName: "chevron.down")
-                                    }
-                                    .disabled(index == viewModel.currentItems.count - 1)
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
-
-                                Button { beginEditing(item) } label: {
-                                    Image(systemName: "pencil")
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
-
-                                Button(role: .destructive) {
-                                    viewModel.delete(itemID: item.id)
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
+                            Button(role: .destructive) {
+                                viewModel.delete(itemID: item.id)
+                            } label: {
+                                Image(systemName: "trash")
                             }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
                         }
                         .padding(10)
                         .background(.white.opacity(0.05))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .onDrop(
+                            of: [.text],
+                            delegate: TodoDropDelegate(
+                                targetID: item.id,
+                                viewModel: viewModel,
+                                draggedTodoID: $draggedTodoID
+                            )
+                        )
                     }
                 }
             }
@@ -246,6 +227,11 @@ struct ContentView: View {
             }
         }
         .onChange(of: viewModel.selectedDate) { cancelEditingTodo() }
+        .onChange(of: focusedTodoID) {
+            if editingTodoID != nil && focusedTodoID == nil {
+                commitEditingTodo()
+            }
+        }
     }
 
     // MARK: Resize Grip
@@ -281,6 +267,22 @@ struct ContentView: View {
         editingTodoID = nil
         editingTodoText = ""
         focusedTodoID = nil
+    }
+}
+
+private struct TodoDropDelegate: DropDelegate {
+    let targetID: UUID
+    let viewModel: WidgetViewModel
+    @Binding var draggedTodoID: UUID?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedTodoID, draggedTodoID != targetID else { return }
+        viewModel.moveTodo(itemID: draggedTodoID, to: targetID)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedTodoID = nil
+        return true
     }
 }
 
@@ -473,15 +475,16 @@ final class WidgetViewModel: ObservableObject {
         setCurrentItems(items)
     }
 
-    func moveTodo(itemID: UUID, by offset: Int) {
+    func moveTodo(itemID: UUID, to targetID: UUID) {
         var items = currentItems
         guard
             let from = items.firstIndex(where: { $0.id == itemID }),
-            items.indices.contains(from + offset)
+            let to = items.firstIndex(where: { $0.id == targetID }),
+            from != to
         else { return }
 
         let item = items.remove(at: from)
-        items.insert(item, at: from + offset)
+        items.insert(item, at: to)
         setCurrentItems(items)
     }
 
