@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @ObservedObject var viewModel: WidgetViewModel
     @State private var isShowingDatePicker = false
+    @State private var isShowingMotivationSettings = false
     @State private var editingTodoID: UUID?
     @State private var editingTodoText = ""
     @State private var draggedTodoID: UUID?
@@ -51,6 +52,13 @@ struct ContentView: View {
                 )) {
                     Label("Launch at Login", systemImage: "power")
                 }
+                Divider()
+                Button {
+                    viewModel.loadMotivationSettings()
+                    isShowingMotivationSettings = true
+                } label: {
+                    Label("Words API Settings", systemImage: "sparkles")
+                }
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 14, weight: .semibold))
@@ -58,6 +66,40 @@ struct ContentView: View {
             }
             .menuStyle(.borderlessButton)
         }
+        .sheet(isPresented: $isShowingMotivationSettings) {
+            motivationSettingsSheet
+        }
+    }
+
+    private var motivationSettingsSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Words API")
+                .font(.headline)
+
+            SecureField("API key", text: $viewModel.motivationAPIKey)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("Endpoint", text: $viewModel.motivationEndpoint)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("Model", text: $viewModel.motivationModel)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    isShowingMotivationSettings = false
+                }
+                Button("Save") {
+                    viewModel.saveMotivationSettings()
+                    isShowingMotivationSettings = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 380)
+        .preferredColorScheme(.dark)
     }
 
     // MARK: Countdown Card
@@ -415,20 +457,37 @@ struct TodoItem: Identifiable, Codable, Equatable {
 // MARK: - Words For Today API
 
 private enum MotivationAPIConfig {
-    static let apiKey = "PASTE_YOUR_LLM_API_KEY_HERE"
-    static let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
-    static let model = "gpt-4o-mini"
+    static let apiKeyKey = "MotivationAPIKey"
+    static let endpointKey = "MotivationEndpoint"
+    static let modelKey = "MotivationModel"
+    static let defaultEndpoint = "https://api.openai.com/v1/chat/completions"
+    static let defaultModel = "gpt-4o-mini"
+
+    static var apiKey: String {
+        UserDefaults.standard.string(forKey: apiKeyKey) ?? ""
+    }
+
+    static var endpointString: String {
+        UserDefaults.standard.string(forKey: endpointKey) ?? defaultEndpoint
+    }
+
+    static var model: String {
+        UserDefaults.standard.string(forKey: modelKey) ?? defaultModel
+    }
 }
 
 private enum MotivationAPIError: LocalizedError {
     case missingAPIKey
+    case invalidEndpoint
     case invalidResponse
     case emptyMessage
 
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "Paste your LLM API key in MotivationAPIConfig.apiKey."
+            return "Add your LLM API key in Words API Settings."
+        case .invalidEndpoint:
+            return "Words API endpoint is not a valid URL."
         case .invalidResponse:
             return "Words API returned an unreadable response."
         case .emptyMessage:
@@ -452,11 +511,14 @@ private struct ChatCompletionResponse: Decodable {
 private struct MotivationService {
     func generateLine(for items: [TodoItem]) async throws -> String {
         let apiKey = MotivationAPIConfig.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !apiKey.isEmpty, apiKey != "PASTE_YOUR_LLM_API_KEY_HERE" else {
+        guard !apiKey.isEmpty else {
             throw MotivationAPIError.missingAPIKey
         }
+        guard let endpoint = URL(string: MotivationAPIConfig.endpointString) else {
+            throw MotivationAPIError.invalidEndpoint
+        }
 
-        var request = URLRequest(url: MotivationAPIConfig.endpoint)
+        var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 25
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -521,6 +583,9 @@ final class WidgetViewModel: ObservableObject {
     @Published var wordsForToday: String?
     @Published var wordsForTodayError: String?
     @Published var isGeneratingWordsForToday = false
+    @Published var motivationAPIKey = ""
+    @Published var motivationEndpoint = MotivationAPIConfig.defaultEndpoint
+    @Published var motivationModel = MotivationAPIConfig.defaultModel
     var isTodoDragActive = false
     var todoRowFrames: [CGRect] = []
 
@@ -552,6 +617,7 @@ final class WidgetViewModel: ObservableObject {
         }
         launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
         floatOnTop    = UserDefaults.standard.bool(forKey: "floatOnTop")
+        loadMotivationSettings()
 
         isLoading = false
     }
@@ -679,6 +745,29 @@ final class WidgetViewModel: ObservableObject {
     private func resetWordsForToday() {
         wordsForToday = nil
         wordsForTodayError = nil
+    }
+
+    func loadMotivationSettings() {
+        motivationAPIKey = MotivationAPIConfig.apiKey
+        motivationEndpoint = MotivationAPIConfig.endpointString
+        motivationModel = MotivationAPIConfig.model
+    }
+
+    func saveMotivationSettings() {
+        let key = motivationAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let endpoint = motivationEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = motivationModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if key.isEmpty {
+            UserDefaults.standard.removeObject(forKey: MotivationAPIConfig.apiKeyKey)
+        } else {
+            UserDefaults.standard.set(key, forKey: MotivationAPIConfig.apiKeyKey)
+        }
+        UserDefaults.standard.set(endpoint.isEmpty ? MotivationAPIConfig.defaultEndpoint : endpoint, forKey: MotivationAPIConfig.endpointKey)
+        UserDefaults.standard.set(model.isEmpty ? MotivationAPIConfig.defaultModel : model, forKey: MotivationAPIConfig.modelKey)
+        UserDefaults.standard.synchronize()
+        loadMotivationSettings()
+        resetWordsForToday()
     }
 
     func setTargetDate(_ date: Date) {
