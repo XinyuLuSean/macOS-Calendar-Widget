@@ -7,6 +7,9 @@ import AppKit
 struct ContentView: View {
     @ObservedObject var viewModel: WidgetViewModel
     @State private var isShowingDatePicker = false
+    @State private var editingTodoID: UUID?
+    @State private var editingTodoText = ""
+    @FocusState private var focusedTodoID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -145,20 +148,53 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
 
-                            Text(item.text)
-                                .strikethrough(item.isDone, color: .secondary)
-                                .foregroundStyle(item.isDone ? .secondary : .primary)
-                                .lineLimit(2)
+                            if editingTodoID == item.id {
+                                TextField("Todo", text: $editingTodoText)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedTodoID, equals: item.id)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(.white.opacity(0.08))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .onSubmit { commitEditingTodo() }
+                            } else {
+                                Text(item.text)
+                                    .strikethrough(item.isDone, color: .secondary)
+                                    .foregroundStyle(item.isDone ? .secondary : .primary)
+                                    .lineLimit(2)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { beginEditing(item) }
+                            }
 
                             Spacer(minLength: 0)
 
-                            Button(role: .destructive) {
-                                viewModel.delete(itemID: item.id)
-                            } label: {
-                                Image(systemName: "trash")
+                            if editingTodoID == item.id {
+                                Button { commitEditingTodo() } label: {
+                                    Image(systemName: "checkmark")
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.green)
+
+                                Button { cancelEditingTodo() } label: {
+                                    Image(systemName: "xmark")
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                            } else {
+                                Button { beginEditing(item) } label: {
+                                    Image(systemName: "pencil")
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+
+                                Button(role: .destructive) {
+                                    viewModel.delete(itemID: item.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
                             }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
                         }
                         .padding(10)
                         .background(.white.opacity(0.05))
@@ -195,6 +231,7 @@ struct ContentView: View {
                     .lineLimit(2)
             }
         }
+        .onChange(of: viewModel.selectedDate) { cancelEditingTodo() }
     }
 
     // MARK: Resize Grip
@@ -205,6 +242,31 @@ struct ContentView: View {
             ResizeGrip()
                 .frame(width: 22, height: 22)
         }
+    }
+
+    private func beginEditing(_ item: TodoItem) {
+        if editingTodoID != item.id {
+            commitEditingTodo()
+        }
+        editingTodoID = item.id
+        editingTodoText = item.text
+        DispatchQueue.main.async {
+            focusedTodoID = item.id
+        }
+    }
+
+    private func commitEditingTodo() {
+        guard let id = editingTodoID else { return }
+        viewModel.updateTodo(itemID: id, text: editingTodoText)
+        editingTodoID = nil
+        editingTodoText = ""
+        focusedTodoID = nil
+    }
+
+    private func cancelEditingTodo() {
+        editingTodoID = nil
+        editingTodoText = ""
+        focusedTodoID = nil
     }
 }
 
@@ -385,6 +447,15 @@ final class WidgetViewModel: ObservableObject {
     func delete(itemID: UUID) {
         var items = currentItems
         items.removeAll { $0.id == itemID }
+        setCurrentItems(items)
+    }
+
+    func updateTodo(itemID: UUID, text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        var items = currentItems
+        guard let i = items.firstIndex(where: { $0.id == itemID }) else { return }
+        items[i].text = t
         setCurrentItems(items)
     }
 
