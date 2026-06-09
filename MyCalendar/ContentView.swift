@@ -208,18 +208,21 @@ struct ContentView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     .onSubmit { commitEditingTodo() }
                             } else {
-                                Text(item.text)
-                                    .strikethrough(item.isDone, color: .secondary)
-                                    .foregroundStyle(item.isDone ? .secondary : .primary)
-                                    .lineLimit(2)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { beginEditing(item) }
-                                    .onDrag {
-                                        cancelEditingTodo()
-                                        draggedTodoID = item.id
-                                        viewModel.isTodoDragActive = true
-                                        return NSItemProvider(object: item.id.uuidString as NSString)
-                                    }
+                                Button { beginEditing(item) } label: {
+                                    Text(item.text)
+                                        .strikethrough(item.isDone, color: .secondary)
+                                        .foregroundStyle(item.isDone ? .secondary : .primary)
+                                        .lineLimit(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .onDrag {
+                                    cancelEditingTodo()
+                                    draggedTodoID = item.id
+                                    viewModel.isTodoDragActive = true
+                                    return NSItemProvider(object: item.id.uuidString as NSString)
+                                }
                             }
 
                             Spacer(minLength: 0)
