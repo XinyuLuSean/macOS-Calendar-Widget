@@ -208,19 +208,27 @@ struct ContentView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     .onSubmit { commitEditingTodo() }
                             } else {
-                                Button { beginEditing(item) } label: {
-                                    Text(item.text)
-                                        .strikethrough(item.isDone, color: .secondary)
-                                        .foregroundStyle(item.isDone ? .secondary : .primary)
-                                        .lineLimit(2)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
+                                TodoTextDragEditView(
+                                    item: item,
+                                    onEdit: { beginEditing(item) },
+                                    onDragStart: {
+                                        cancelEditingTodo()
+                                        draggedTodoID = item.id
+                                        viewModel.isTodoDragActive = true
+                                    },
+                                    onDragEnd: {
+                                        draggedTodoID = nil
+                                        viewModel.isTodoDragActive = false
+                                    }
+                                )
+                                .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .onDrag {
-                                    cancelEditingTodo()
-                                    draggedTodoID = item.id
-                                    viewModel.isTodoDragActive = true
+                                    if draggedTodoID == nil {
+                                        cancelEditingTodo()
+                                        draggedTodoID = item.id
+                                        viewModel.isTodoDragActive = true
+                                    }
                                     return NSItemProvider(object: item.id.uuidString as NSString)
                                 }
                             }
@@ -369,6 +377,129 @@ struct ContentView: View {
         editingTodoID = nil
         editingTodoText = ""
         focusedTodoID = nil
+    }
+}
+
+private struct TodoTextDragEditView: NSViewRepresentable {
+    let item: TodoItem
+    let onEdit: () -> Void
+    let onDragStart: () -> Void
+    let onDragEnd: () -> Void
+
+    func makeNSView(context: Context) -> TodoTextDragEditField {
+        let field = TodoTextDragEditField()
+        field.onEdit = onEdit
+        field.onDragStart = onDragStart
+        field.onDragEnd = onDragEnd
+        return field
+    }
+
+    func updateNSView(_ nsView: TodoTextDragEditField, context: Context) {
+        nsView.todoID = item.id
+        nsView.attributedStringValue = attributedText(for: item)
+        nsView.onEdit = onEdit
+        nsView.onDragStart = onDragStart
+        nsView.onDragEnd = onDragEnd
+    }
+
+    private func attributedText(for item: TodoItem) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13),
+            .foregroundColor: item.isDone ? NSColor.secondaryLabelColor : NSColor.labelColor,
+            .paragraphStyle: paragraph
+        ]
+        if item.isDone {
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            attributes[.strikethroughColor] = NSColor.secondaryLabelColor
+        }
+        return NSAttributedString(string: item.text, attributes: attributes)
+    }
+}
+
+final class TodoTextDragEditField: NSTextField, NSDraggingSource {
+    var todoID = UUID()
+    var onEdit: () -> Void = {}
+    var onDragStart: () -> Void = {}
+    var onDragEnd: () -> Void = {}
+
+    private var mouseDownEvent: NSEvent?
+    private var hasStartedDrag = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isEditable = false
+        isSelectable = false
+        isBordered = false
+        drawsBackground = false
+        lineBreakMode = .byWordWrapping
+        maximumNumberOfLines = 2
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: max(18, super.intrinsicContentSize.height))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownEvent = event
+        hasStartedDrag = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let startEvent = mouseDownEvent, !hasStartedDrag else { return }
+        let start = startEvent.locationInWindow
+        let current = event.locationInWindow
+        guard hypot(current.x - start.x, current.y - start.y) > 4 else { return }
+
+        hasStartedDrag = true
+        onDragStart()
+
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(todoID.uuidString, forType: .string)
+
+        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        draggingItem.setDraggingFrame(bounds, contents: dragImage())
+        beginDraggingSession(with: [draggingItem], event: startEvent, source: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if !hasStartedDrag {
+            onEdit()
+        }
+        mouseDownEvent = nil
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .move
+    }
+
+    func ignoreModifierKeys(for session: NSDraggingSession) -> Bool {
+        true
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        onDragEnd()
+        mouseDownEvent = nil
+        hasStartedDrag = false
+    }
+
+    private func dragImage() -> NSImage {
+        guard bounds.width > 0, bounds.height > 0,
+              let rep = bitmapImageRepForCachingDisplay(in: bounds) else {
+            return NSImage(size: NSSize(width: 1, height: 1))
+        }
+        cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(rep)
+        return image
     }
 }
 
